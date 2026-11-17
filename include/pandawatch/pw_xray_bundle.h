@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "pw_xray_ir.h"
-#include "pw_xray_evidence_checked.h"
+#include "pw_xray_evidence.h"
 
 #define PW_MANIFEST_BYTES       192u
 #define PW_MANIFEST_SEALED_BYTES 160u

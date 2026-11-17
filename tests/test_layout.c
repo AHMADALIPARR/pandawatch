@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SnapKitty-Opaque-1.0
  * Copyright (C) 2026 Ahmad Ali Parr / SnapKitty Research Lab
  */
-/* Compile-time layout checks for pw_xray_ir.h (original, byte-for-byte) and
- * pw_xray_evidence_checked.h. If this file compiles, every assertion holds. */
+/* Compile-time layout checks for pw_xray_ir.h and pw_xray_evidence.h (with the
+ * _reserved1 fix applied). If this file compiles, every assertion holds. */
 #include "pw_xray_ir.h"
-#include "pw_xray_evidence_checked.h"
+#include "pw_xray_evidence.h"
 #include "pw_test.h"
 
 #include <stddef.h>

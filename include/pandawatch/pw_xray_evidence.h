@@ -58,6 +58,7 @@ typedef struct {
     uint8_t  ir_corpus_sha256[32];   /* Gate 3 aggregate IR digest */
     uint8_t  alloy_model_sha256[32]; /* Gate 7 generated .als file digest */
     uint8_t  records_sha256[32];     /* SHA-256 over sorted pw_evidence_record_t[] */
+    uint64_t _reserved1;             /* Must be 0 (places manifest_sha256 at offset 160) */
     uint8_t  manifest_sha256[32];    /* SHA-256 of bytes [0..159] of this header */
 } pw_evidence_manifest_t;
 _Static_assert(sizeof(pw_evidence_manifest_t) == 192, "pw_evidence_manifest_t must be 192 bytes");
