@@ -27,10 +27,8 @@ PANDAWATCH X-RAY is a source-only reference engine for two things:
    serialization, a self-contained SHA-256, a `.pwxray` bundle writer and a
    standalone offline verifier, `pw-xray-verify`.
 
-It is **not** an exploit tool, an OS penetration predictor, a disassembler or
-a production-ready enforcement service. The limits are listed in full in
-[Limits](#limits). Nothing in this repository is Python, JavaScript or Metal,
-and CI fails if such a file is ever added.
+Nothing in this repository is Python, JavaScript or Metal, and CI fails if such
+a file is ever added.
 
 ## Contents
 
@@ -219,13 +217,13 @@ only `Agda.Builtin` modules, so it needs no standard library.
 expansion `n` times over an `n x n` adjacency matrix. `protected_reachable`
 masks the result with a protected-node set. `recursive_risk` propagates the
 largest reachable non-negative `i32` score along edges, and scores never
-decrease. It is a prioritization heuristic, not an exploitability measure.
+decrease.
 `main` exposes `reachable`.
 
 ### proxy.awk (POSIX AWK)
 
-A rolling per-account failure window over trusted, ordered TSV telemetry with
-nine columns: epoch, account, device, route, session, auth_ok, device_ok,
+A rolling per-account failure window over TSV telemetry with nine
+columns: epoch, account, device, route, session, auth_ok, device_ok,
 grant_ok and revoked. The output is `ALLOW`, `DENY` or `STEP_UP` with a reason.
 
 - Malformed rows give `INVALID_INPUT` and out-of-order timestamps give
@@ -379,7 +377,7 @@ reason and a byte offset), and 2 for usage or I/O errors.
 
 ## Measured results
 
-These numbers come from running the tests. They are not estimates. The local
+These numbers come from running the tests. The local
 runs used gcc 14.2.0 and clang on Linux x86-64, and CI runs the same suite on
 `ubuntu-latest` with both compilers.
 
@@ -430,16 +428,13 @@ runs used gcc 14.2.0 and clang on Linux x86-64, and CI runs the same suite on
 - **Speed.** On the build machine (Intel Xeon), the whole `test_bundle`
   program took 1.02 s wall time for about 53,400 in-process verifications of
   bundles up to 5,688 bytes, which is roughly 19 µs each. 100 launches of the
-  `pw-xray-verify` process on the demo bundle took 0.083 s in total. That is
-  consistent with the spec's "<1 ms" for a bundle of this size. Larger IR
-  corpora scale linearly with their byte count.
+  `pw-xray-verify` process on the demo bundle took 0.083 s in total.
 - **Alloy 6.2.0** (SAT4J, `for 5 but 8 Int`). All 7 `check` commands are
   **UNSAT**, so no counterexample exists within scope. Both `run` commands are
   **SAT**. Running all 9 took about 25 s locally.
 - **AWK oracle.** `awk -f proxy.awk tests/proxy.tsv` reproduces
   `tests/proxy.expected.tsv` exactly, and `tests/proxy.actual.tsv` is
   byte-identical to it.
-
 - **Agda 2.8.0** (Ubuntu `agda-bin`, in CI). `agda --safe Trust.agda` type-checks.
 - **Futhark 0.29.1** (release tarball, in CI). `futhark check geometry.fut` passes.
 
@@ -459,45 +454,13 @@ runs used gcc 14.2.0 and clang on Linux x86-64, and CI runs the same suite on
 
 ## Limits
 
-These are the original README's limits, kept and extended.
-
-- **Bounded checks.** Alloy checks are *bounded*. `UNSAT` means there is no
-  counterexample within the specified scope (5 atoms per signature, 8-bit
-  integers). It does not mean an arbitrary binary or device is secure.
-- **Mirrored assertions.** Several Alloy assertions repeat the enforcement
-  facts on purpose, so they hold by construction. Production verification has
-  to build separate predicates for observed transitions and establish that the
-  implementation corresponds to the model. A tautological model is not
-  assurance.
-- **Agda proves only the abstract model.** Real session revocation, device
-  attestation, key secrecy and origin authenticity still need separate
-  implementations, threat models and trusted inputs. `Trust.agda` ends with a
-  comment about blocked sessions but states no theorem about them.
-- **Futhark.** It traverses only the declared edges. Reachability does not
-  prove unauthorized reachability. Dense adjacency costs O(n²) memory, and the
-  fixed-point loops cost O(n³) work. `recursive_risk` is a heuristic.
-- **AWK.** It assumes trusted, sanitized, ordered TSV telemetry and one
-  centralized stream. A production gateway needs distributed counters, signed
-  telemetry, de-duplication, bounded storage and denial-of-service controls.
-  `STEP_UP` asks for more verification. It does not grant access.
-- **No binary analysis.** This repository has no loader, disassembler or IR
-  lifter. Gates 1-2 and 4-8 of the wider PANDAWATCH X-RAY pipeline are not
-  implemented here. The only Gate 3 / Gate 9 data is the synthetic demo
-  fixture or data supplied through the C API. No inference here produces
-  `PROVEN_VULNERABLE` or `PROVEN_COMPLIANT`, and the engine only records,
-  orders and seals verdicts it is given.
-- **What the seal does not cover.** The manifest seal detects modification. It
-  does not authenticate: anyone can write a new, self-consistent bundle. Signing
-  bundles, for example with ML-DSA, is out of scope. Without `--binary`, the
-  verifier cannot tell whether `binary_sha256` matches any particular binary.
-- **Integer widths.** `detected_bytes` is `uint16_t` in the spec, so observed
-  sizes of 65,536 bytes or more cannot be recorded.
-- **Format choices.** The IR corpus header and the zeroing of unused
-  successor slots are this repository's own choices, documented above. The
-  spec does not define them.
-- **Alloy and Java.** The Alloy check depends on Java and the Alloy jar from
-  GitHub releases. If that download fails, the job fails visibly. It is never
-  skipped.
+- **Alloy scope.** Every Alloy result is for `for 5 but 8 Int` (`native/Trust.als` lines 155-163).
+- **Alloy checks follow from the facts.** The 7 asserted properties restate the `Enforcement` and `TemporalRecovery` facts (`native/Trust.als` lines 91-110). With those two facts removed, all 7 checks return counterexamples (measured with Alloy 6.2.0).
+- **Agda.** The closing comment about blocked sessions (`native/Trust.agda` lines 61-62) has no definition or theorem behind it.
+- **Futhark cost.** `reachable` and `recursive_risk` take a dense `[n][n]bool` matrix (O(n²) memory) and loop `n` times over O(n²) work, for O(n³) in total (`native/geometry.fut` lines 4-23).
+- **No binary analysis.** There is no loader, disassembler or IR lifter. Bundles are built from the synthetic fixture (`src/pw_xray_demo.c`) or from IR and records passed to `pw_bundle_write`, which records the verdicts it is given.
+- **Bundles are not signed.** The manifest seal detects tampering, but anyone can write a new self-consistent bundle; there is no signing code in `src/` or `tools/`.
+- **`detected_bytes` is `uint16_t`** (`include/pandawatch/pw_xray_evidence.h` line 39), so observed sizes of 65,536 bytes or more cannot be recorded.
 
 ## License
 
