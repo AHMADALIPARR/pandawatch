@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SnapKitty-Opaque-1.0
+# Copyright (C) 2026 Ahmad Ali Parr / SnapKitty Research Lab
+# Golden digests of the demo bundle built from native/tests/proxy.tsv (as the
+# "binary") and native/Trust.als (as the Alloy model). Measured, not invented.
+bundle_bytes 5687
+bundle_sha256 5744443422720edf4fc4e5aba3a31828ebec943f383c81cf8c839bc27113ca8b
+manifest_sha256 d922038be57f294a310eba0c4749daf17d91be82a3113619fe2a7c40e6dd4883

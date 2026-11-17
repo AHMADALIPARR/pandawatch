@@ -1,0 +1,123 @@
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SnapKitty-Opaque-1.0
+# Copyright (C) 2026 Ahmad Ali Parr / SnapKitty Research Lab
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  no-python-no-javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse Python / JavaScript / TypeScript / Metal sources
+        run: |
+          bad=$(git ls-files | grep -Ei '\.(py|pyw|pyi|ipynb|js|mjs|cjs|jsx|ts|tsx|metal)$|(^|/)(package\.json|package-lock\.json|requirements\.txt|setup\.py|pyproject\.toml)$' || true)
+          if [ -n "$bad" ]; then echo "Forbidden files:"; echo "$bad"; exit 1; fi
+          shebang=$(git ls-files -z | xargs -0 grep -lE '^#!.*\b(python[0-9.]*|node|deno|bun)\b' 2>/dev/null || true)
+          if [ -n "$shebang" ]; then echo "Forbidden interpreters:"; echo "$shebang"; exit 1; fi
+          echo "no Python, JavaScript, TypeScript or Metal files tracked"
+
+  c11:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: ${{ matrix.cc }} --version && cmake --version
+      - name: Configure (C11, -Wall -Wextra -Wpedantic -Werror)
+        run: cmake -S . -B build -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build build -j1
+      - name: ctest
+        run: ctest --test-dir build --output-on-failure -V
+      - name: Cross-check pw-xray sha256 against coreutils sha256sum
+        run: |
+          for f in native/Trust.als native/Trust.agda native/geometry.fut native/proxy.awk \
+                   native/tests/proxy.tsv LICENSE-AGPL-3.0 docs/source/engine-spec.md; do
+            a=$(./build/pw-xray sha256 "$f" | cut -d' ' -f1)
+            b=$(sha256sum "$f" | cut -d' ' -f1)
+            echo "$a $b $f"; [ "$a" = "$b" ]
+          done
+      - name: Demo bundle matches committed golden digest (cross-compiler determinism)
+        run: |
+          ./build/pw-xray demo --binary native/tests/proxy.tsv --alloy native/Trust.als -o demo.pwxray
+          got=$(sha256sum demo.pwxray | cut -d' ' -f1)
+          want=$(awk '$1=="bundle_sha256"{print $2}' tests/fixtures/demo-bundle.golden)
+          echo "got  $got"; echo "want $want"; [ "$got" = "$want" ]
+          ./build/pw-xray-verify demo.pwxray --binary native/tests/proxy.tsv
+          ./build/pw-xray inspect demo.pwxray
+
+  awk-oracle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gawk and busybox (default awk on the runner is mawk)
+        run: sudo apt-get update -q && sudo apt-get install -y -q gawk busybox
+      - name: README verification commands (default awk)
+        working-directory: native
+        run: |
+          awk -f proxy.awk tests/proxy.tsv > /tmp/pandawatch-proxy.tsv
+          diff -u tests/proxy.expected.tsv /tmp/pandawatch-proxy.tsv
+      - name: Same oracle under gawk --posix, mawk and busybox awk
+        working-directory: native
+        run: |
+          gawk --posix -f proxy.awk tests/proxy.tsv | diff -u tests/proxy.expected.tsv -
+          mawk -f proxy.awk tests/proxy.tsv | diff -u tests/proxy.expected.tsv -
+          busybox awk -f proxy.awk tests/proxy.tsv | diff -u tests/proxy.expected.tsv -
+      - name: Committed proxy.actual.tsv equals the oracle
+        working-directory: native
+        run: cmp tests/proxy.expected.tsv tests/proxy.actual.tsv
+
+  agda:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Agda (Ubuntu package; Trust.agda needs only Agda.Builtin)
+        run: sudo apt-get update -q && sudo apt-get install -y -q agda-bin
+      - name: agda --safe Trust.agda
+        working-directory: native
+        run: agda --version && agda --safe Trust.agda
+
+  futhark:
+    runs-on: ubuntu-latest
+    env:
+      FUTHARK_VERSION: 0.29.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Futhark release tarball
+        run: |
+          curl -fsSL -o futhark.tar.xz \
+            "https://github.com/diku-dk/futhark/releases/download/v${FUTHARK_VERSION}/futhark-${FUTHARK_VERSION}-linux-x86_64.tar.xz"
+          tar -xJf futhark.tar.xz
+          echo "$PWD/futhark-${FUTHARK_VERSION}-linux-x86_64/bin" >> "$GITHUB_PATH"
+      - name: futhark check geometry.fut
+        working-directory: native
+        run: futhark --version && futhark check geometry.fut
+
+  alloy:
+    runs-on: ubuntu-latest
+    env:
+      ALLOY_VERSION: 6.2.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Download Alloy jar
+        run: |
+          curl -fsSL -o alloy.jar \
+            "https://github.com/AlloyTools/org.alloytools.alloy/releases/download/v${ALLOY_VERSION}/org.alloytools.alloy.dist.jar"
+      - name: Run every check and run command in Trust.als
+        run: |
+          java -jar alloy.jar exec -f -o alloy-out -t text native/Trust.als 2>&1 | tee alloy.log
+          awk -v expected=9 -f ci/alloy-verdicts.awk alloy.log
