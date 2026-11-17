@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SnapKitty-Opaque-1.0
+# Copyright (C) 2026 Ahmad Ali Parr / SnapKitty Research Lab
+*.als   linguist-language=Alloy
+*.agda  linguist-language=Agda
+*.fut   linguist-language=Futhark
+*.awk   linguist-language=Awk
+*.h     linguist-language=C
+*.c     linguist-language=C
+# Byte-for-byte originals and fixtures: never normalize line endings.
+native/**       -text
+docs/source/**  -text
+tests/fixtures/** -text
+*.tsv   -text
