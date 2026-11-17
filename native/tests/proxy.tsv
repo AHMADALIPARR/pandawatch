@@ -1,0 +1,9 @@
+1000	alice	d1	direct	s1	0	1	1	0
+1001	alice	d1	socks	s2	0	1	1	0
+1002	alice	d1	onion	s3	0	1	1	0
+1003	alice	d1	direct	s4	0	1	1	0
+1004	alice	d1	socks	s5	0	1	1	0
+1005	alice	d1	onion	s6	1	1	1	0
+1006	bob	d2	onion	s7	1	1	1	0
+1007	bob	d2	direct	s8	1	1	1	1
+1605	alice	d1	direct	s9	1	1	1	0
