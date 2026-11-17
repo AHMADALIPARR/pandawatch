@@ -20,7 +20,7 @@ set(PW_INC ${CMAKE_CURRENT_SOURCE_DIR}/include/pandawatch)
 
 add_library(pandawatch STATIC
   src/pw_sha256.c
-  src/pw_xray_canon_checked.c
+  src/pw_xray_canon.c
   src/pw_xray_bundle.c
   src/pw_xray_demo.c
   src/pw_io.c)
@@ -58,17 +58,14 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/native/Trust.als
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/demo-bundle.golden)
 
-  # The ORIGINAL headers/source from the spec, compiled unchanged. The
-  # evidence header trips its own 192-byte _Static_assert (fields total 184
-  # bytes); these tests pass only when that exact diagnostic is reported.
-  add_test(NAME original_evidence_header_static_assert_fails
-    COMMAND ${CMAKE_C_COMPILER} -std=c11 -fsyntax-only -I${PW_INC}
+  # The spec header and source compile as-is (with the _reserved1 fix):
+  # standalone syntax checks with -Werror, plus 192/160 layout asserts.
+  add_test(NAME evidence_header_compiles_192_bytes
+    COMMAND ${CMAKE_C_COMPILER} -std=c11 -Wall -Wextra -Werror -fsyntax-only -I${PW_INC}
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/original_evidence_probe.c)
-  add_test(NAME original_canon_c_static_assert_fails
-    COMMAND ${CMAKE_C_COMPILER} -std=c11 -fsyntax-only -I${PW_INC}
+  add_test(NAME canon_c_compiles
+    COMMAND ${CMAKE_C_COMPILER} -std=c11 -Wall -Wextra -Werror -fsyntax-only -I${PW_INC}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/pw_xray_canon.c)
-  set_tests_properties(original_evidence_header_static_assert_fails original_canon_c_static_assert_fails
-    PROPERTIES PASS_REGULAR_EXPRESSION "pw_evidence_manifest_t must be 192 bytes")
 
   # CLI end to end: demo bundle -> verifier (with and without --binary).
   add_test(NAME cli_demo_bundle

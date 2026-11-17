@@ -5,6 +5,16 @@ Copyright (C) 2026 Ahmad Ali Parr / SnapKitty Research Lab
 
 # PANDAWATCH X-RAY: trust geometry and reproducible evidence engine
 
+[![ci](https://github.com/AHMADALIPARR/pandawatch/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/AHMADALIPARR/pandawatch/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-AGPL--3.0%20%2B%20SnapKitty%20Opaque%201.0-blue)](LICENSE)
+[![C11](https://img.shields.io/badge/C-C11-00599C?logo=c&logoColor=white)](src/)
+[![Alloy 6](https://img.shields.io/badge/Alloy-6.2.0-8A2BE2)](native/Trust.als)
+[![Agda](https://img.shields.io/badge/Agda-2.8.0%20safe-5e4fa2)](native/Trust.agda)
+[![Futhark](https://img.shields.io/badge/Futhark-0.29.1-5f021f)](native/geometry.fut)
+[![AWK](https://img.shields.io/badge/AWK-POSIX-4c1)](native/proxy.awk)
+[![no Python](https://img.shields.io/badge/Python-none-lightgrey)](.github/workflows/ci.yml)
+[![no JavaScript](https://img.shields.io/badge/JavaScript-none-lightgrey)](.github/workflows/ci.yml)
+
 PANDAWATCH X-RAY is a source-only reference engine for two things:
 
 1. **Trust geometry.** Small formal and executable models of the authorization
@@ -25,7 +35,7 @@ and CI fails if such a file is ever added.
 ## Contents
 
 - [Repository layout](#repository-layout)
-- [Provenance: originals, checked copies and new code](#provenance-originals-checked-copies-and-new-code)
+- [Provenance: originals, fixed files, checked copies and new code](#provenance-originals-fixed-files-checked-copies-and-new-code)
 - [Building and testing](#building-and-testing)
 - [The trust-geometry models (native/)](#the-trust-geometry-models-native)
 - [The Gate 3 / Gate 9 engine (C11)](#the-gate-3--gate-9-engine-c11)
@@ -49,8 +59,8 @@ native/                     the zip contents, unchanged
   tests/proxy.actual.tsv    committed actual output (identical to the oracle)
 include/pandawatch/
   pw_xray_ir.h              extracted from the spec, unchanged
-  pw_xray_evidence.h        extracted from the spec, unchanged (does not compile, see below)
-  pw_xray_evidence_checked.h  the checked fix
+  pw_xray_evidence.h        extracted from the spec, plus the _reserved1 fix (compiles)
+  pw_xray_evidence_checked.h  earlier checked copy of the same fix (redundant, unused)
   pw_xray_canon.h           prototypes for the spec's serializers
   pw_xray_bundle.h          sorting, packing, writer, verifier API
   pw_sha256.h               SHA-256 API
@@ -58,7 +68,7 @@ include/pandawatch/
   pw_io.h                   file helpers
 src/
   pw_xray_canon.c           extracted from the spec, unchanged
-  pw_xray_canon_checked.c   same bodies, includes the checked header
+  pw_xray_canon_checked.c   earlier checked copy (redundant, unused)
   pw_sha256.c               FIPS 180-4 SHA-256
   pw_xray_bundle.c          bundle writer and verifier
   pw_xray_demo.c            synthetic Gate 3 / Gate 9 fixture
@@ -75,12 +85,14 @@ docs/
 .github/workflows/ci.yml
 ```
 
-## Provenance: originals, checked copies and new code
+## Provenance: originals, fixed files, checked copies and new code
 
-The author's files are kept byte-for-byte. Where an original does not compile
-or pass, it stays as it is and a `_checked` copy sits beside it.
+The author's files are kept byte-for-byte, with one exception: the evidence
+header, which did not compile as written and has been fixed in place with the
+author's approval. The untouched original text of every extracted block is
+still in [`docs/source/engine-spec.md`](docs/source/engine-spec.md).
 
-**Byte-for-byte originals (13 files).**
+**Byte-for-byte originals (12 files).**
 
 | File | Source |
 | --- | --- |
@@ -88,37 +100,41 @@ or pass, it stays as it is and a `_checked` copy sits beside it.
 | `docs/pandawatch-native-README.md` | `pandawatch-native/README.md` in the zip |
 | `docs/source/engine-spec.md` | the spec markdown |
 | `include/pandawatch/pw_xray_ir.h` | spec lines 9-114 (first fenced block) |
-| `include/pandawatch/pw_xray_evidence.h` | spec lines 119-184 (second fenced block) |
 | `src/pw_xray_canon.c` | spec lines 202-281 (third fenced block) |
 | `LICENSE-AGPL-3.0`, `LICENSE-SnapKitty-Opaque-1.0` | copied from AHMADALIPARR/skytrace |
 
 The originals carry no SPDX header, because adding one would change their
 bytes. The license in `LICENSE` covers them.
 
-**Checked copies (2 files).**
+**Fixed in place (1 file).**
 
-- `include/pandawatch/pw_xray_evidence_checked.h`. The original
-  `pw_evidence_manifest_t` declares 4 + 4 + 1 + 1 + 1 + 1 + 4 + 8 + 5 x 32 =
-  **184 bytes** of fields, so its own
-  `_Static_assert(sizeof(pw_evidence_manifest_t) == 192, ...)` fails with both
-  gcc and clang. The spec text also says `manifest_sha256` "hashes the first
-  160 bytes" of the header, but in the original layout `manifest_sha256`
-  starts at offset 152, so bytes 152-159 would be part of the digest it seals.
-  The checked copy adds one field, `uint64_t _reserved1` (must be 0), after
+- `include/pandawatch/pw_xray_evidence.h` is spec lines 119-184 plus one
+  added line. As written, `pw_evidence_manifest_t` declares
+  4 + 4 + 1 + 1 + 1 + 1 + 4 + 8 + 5 x 32 = **184 bytes** of fields, so its
+  own `_Static_assert(sizeof(pw_evidence_manifest_t) == 192, ...)` failed with
+  both gcc and clang. The spec text also says `manifest_sha256` "hashes the
+  first 160 bytes" of the header, but in that layout `manifest_sha256` started
+  at offset 152, so bytes 152-159 would have been part of the digest it seals.
+  The fix adds one field, `uint64_t _reserved1` (must be 0), after
   `records_sha256`. That places `manifest_sha256` at offset 160 and makes the
   header 192 bytes, so the struct, the assertion and the "first 160 bytes"
-  rule now agree. The include guard is renamed so the two headers cannot be
-  mixed by accident. Nothing else changes.
-- `src/pw_xray_canon_checked.c`. The original `pw_xray_canon.c` is correct C,
-  but it includes `pw_xray_evidence.h` and so inherits the failing assertion.
-  The checked copy changes only that include line. The function bodies are
-  the same.
+  rule now agree. Nothing else changes. The header now compiles as-is, and
+  the library builds the spec's own `src/pw_xray_canon.c` against it.
 
-Two ctest cases compile the untouched originals (`pw_xray_evidence.h` through
-a probe file, and `src/pw_xray_canon.c` directly). They pass only if the
-compiler reports the exact diagnostic `pw_evidence_manifest_t must be 192
-bytes`, so the original failure is kept on record. A third test compiles and
-runs against the original `pw_xray_ir.h`, which is fine as written.
+**Checked copies (2 files, now redundant).**
+`include/pandawatch/pw_xray_evidence_checked.h` and
+`src/pw_xray_canon_checked.c` were added before the in-place fix. They contain
+the same `_reserved1` fix (with a renamed include guard and include line).
+Nothing builds or includes them any more, and they are kept only because
+nothing in this repository is deleted without the author's say-so.
+
+Two ctest cases compile the spec files standalone with
+`-std=c11 -Wall -Wextra -Werror -fsyntax-only`. The first,
+`evidence_header_compiles_192_bytes`, compiles `pw_xray_evidence.h` through a
+probe file that also asserts `sizeof(pw_evidence_manifest_t) == 192`,
+`_reserved1` at offset 152 and `manifest_sha256` at offset 160. The second,
+`canon_c_compiles`, compiles `src/pw_xray_canon.c`. A third test compiles and
+runs against `pw_xray_ir.h`, which was fine as written.
 
 **New files.** Everything else is new and carries this header in its own
 comment syntax:
@@ -302,7 +318,7 @@ out of order.
 
 | Range | Contents |
 | --- | --- |
-| `[0, 192)` | `pw_evidence_manifest_t` (checked layout), little-endian |
+| `[0, 192)` | `pw_evidence_manifest_t` (192-byte layout), little-endian |
 | `[192, 192 + N*64)` | `N = record_count` sorted `pw_evidence_record_t` |
 | `[records_end, ir_end)` | IR corpus |
 | `[ir_end, EOF)` | raw UTF-8 Alloy model |
@@ -424,7 +440,8 @@ runs used gcc 14.2.0 and clang on Linux x86-64, and CI runs the same suite on
   `tests/proxy.expected.tsv` exactly, and `tests/proxy.actual.tsv` is
   byte-identical to it.
 
-For the Agda and Futhark results, see the CI run for the latest commit.
+- **Agda 2.8.0** (Ubuntu `agda-bin`, in CI). `agda --safe Trust.agda` type-checks.
+- **Futhark 0.29.1** (release tarball, in CI). `futhark check geometry.fut` passes.
 
 ## Continuous integration
 
