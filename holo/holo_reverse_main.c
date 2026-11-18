@@ -391,6 +391,16 @@ static const char LEAN_DSL[] =
     "        \xc2\xb7 simp [$recName, HoloRecord.aligned])\n"
     "\n";
 
+/* FieldSpec.disjoint: one field ends at or before the other starts. */
+static int lean_fields_disjoint(const int64_t *off, const int64_t *sz, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = i + 1; j < n; j++) {
+            if (!(off[i] + sz[i] <= off[j] || off[j] + sz[j] <= off[i])) return 0;
+        }
+    }
+    return 1;
+}
+
 static char *emit_lean(const pj *report, const char *import_mod) {
     const pj *man = pj_get(report, "manifest");
     const pj *layouts = layer(report, "holo.layouts");
@@ -416,6 +426,8 @@ static char *emit_lean(const pj *report, const char *import_mod) {
         if (align < 1) align = 1;
         const int64_t at = total > 0 ? ((total + align - 1) / align) * align : align;
         pw_buf fl = {0};
+        int64_t *offs = nullptr, *szs = nullptr;
+        size_t nf = 0;
         const pj *fields = getd(rec, "fields");
         for (size_t k = 0; fields && k < fields->n; k++) {
             const pj *f = fields->v[k];
@@ -429,11 +441,22 @@ static char *emit_lean(const pj *report, const char *import_mod) {
             if (fl.n) pw_buf_puts(&fl, ", ");
             pw_buf_printf(&fl, "%s : u8 @ %lld : %lld align %lld", fname, (long long)off, (long long)sz, (long long)fal);
             free(fname);
+            int64_t *no = realloc(offs, (nf + 1) * sizeof *offs);
+            int64_t *ns = realloc(szs, (nf + 1) * sizeof *szs);
+            if (no == nullptr || ns == nullptr) pw_die("out of memory");
+            offs = no; szs = ns;
+            offs[nf] = off; szs[nf] = sz; nf++;
         }
         pw_buf_putc(&fl, 0);
         pw_buf_printf(&b, "rust_struct! %s { %s } size %lld align %lld\n", rname, fl.p, (long long)at, (long long)align);
-        pw_buf_printf(&b, "wa_holo! %s_sound (\"holo.layouts\") => %s\n\n", rname, rname);
-        free(fl.p); free(rname);
+        if (import_mod && !lean_fields_disjoint(offs, szs, nf)) {
+            pw_buf_printf(&b,
+                "theorem %s_sound : HoloRecord.allWithin %s \xe2\x88\xa7 HoloRecord.aligned %s := by\n"
+                "  decide\n\n", rname, rname, rname);
+        } else {
+            pw_buf_printf(&b, "wa_holo! %s_sound (\"holo.layouts\") => %s\n\n", rname, rname);
+        }
+        free(fl.p); free(offs); free(szs); free(rname);
     }
     pw_buf_puts(&b, import_mod ? "end HoloReversed" : "end HoloDSL");
     free(fmt); free(root);

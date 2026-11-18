@@ -33,7 +33,8 @@ test "$(sha "$dir/out/HoloDSL.lean")" = "$want_lean"
 
 "$hr" "$dir/ledger.holo.wasm" --out-dir "$dir/lean" --lean-import HoloDSL.HoloDSL_checked > /dev/null
 grep -q '^import HoloDSL.HoloDSL_checked$' "$dir/lean/HoloDSL.lean"
-grep -q '^wa_holo! cobol_ACCOUNT_RECORD_sound ("holo.layouts") => cobol_ACCOUNT_RECORD$' "$dir/lean/HoloDSL.lean"
+grep -q '^wa_holo! c_AccountRecord_sound ("holo.layouts") => c_AccountRecord$' "$dir/lean/HoloDSL.lean"
+grep -q '^theorem cobol_ACCOUNT_RECORD_sound : HoloRecord.allWithin cobol_ACCOUNT_RECORD' "$dir/lean/HoloDSL.lean"
 test "$(tail -n 1 "$dir/lean/HoloDSL.lean")" = "end HoloReversed"
 
 LC_ALL=C sed 's/audit_log/audit_lof/g' "$dir/ledger.holo.wasm" > "$dir/tampered.holo.wasm"
