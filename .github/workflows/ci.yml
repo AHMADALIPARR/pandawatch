@@ -34,7 +34,7 @@ jobs:
       - name: Toolchain versions
         run: ${{ matrix.cc }} --version && cmake --version
       - name: Configure (C11, -Wall -Wextra -Wpedantic -Werror)
-        run: cmake -S . -B build -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_BUILD_TYPE=RelWithDebInfo
+        run: cmake -S . -B build -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPW_XASM=OFF
       - name: Build
         run: cmake --build build -j1
       - name: ctest
@@ -55,6 +55,36 @@ jobs:
           echo "got  $got"; echo "want $want"; [ "$got" = "$want" ]
           ./build/pw-xray-verify demo.pwxray --binary native/tests/proxy.tsv
           ./build/pw-xray inspect demo.pwxray
+
+  xasm:
+    name: pw-xasm (C23 + FORTRAN 77 + x86-64 asm, ${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gfortran and binutils (objdump)
+        run: sudo apt-get update -q && sudo apt-get install -y -q gfortran binutils
+      - name: Toolchain versions
+        run: ${{ matrix.cc }} --version && gfortran --version && objdump --version | head -1 && cmake --version
+      - name: Configure (C23 for pw-xasm, gfortran -std=legacy, GNU as)
+        run: cmake -S . -B build -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build build -j1
+      - name: Require the pw-xasm targets
+        run: test -x build/pw-xasm && test -x build/test_xasm
+      - name: ctest
+        run: ctest --test-dir build --output-on-failure -V
+      - name: pw-xasm CLI
+        run: |
+          ./build/pw-xasm layout
+          ./build/pw-xasm asm tests/xasm/corpus.s -o corpus.bin
+          ./build/pw-xasm disasm corpus.bin
+          ./build/pw-xasm lift corpus.bin -o corpus.pwxray
+          ./build/pw-xray-verify corpus.pwxray --binary corpus.bin
+          ./build/pw-xasm structs corpus.pwxray
 
   awk-oracle:
     runs-on: ubuntu-latest

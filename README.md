@@ -8,6 +8,9 @@ Copyright (C) 2026 Ahmad Ali Parr / SnapKitty Research Lab
 [![ci](https://github.com/AHMADALIPARR/pandawatch/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/AHMADALIPARR/pandawatch/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-AGPL--3.0%20%2B%20SnapKitty%20Opaque%201.0-blue)](LICENSE)
 [![C11](https://img.shields.io/badge/C-C11-00599C?logo=c&logoColor=white)](src/)
+[![C23](https://img.shields.io/badge/C-C23-00599C?logo=c&logoColor=white)](xasm/)
+[![FORTRAN 77](https://img.shields.io/badge/FORTRAN-77-734f96?logo=fortran&logoColor=white)](fortran/pw_struct.f)
+[![x86-64 asm](https://img.shields.io/badge/asm-x86--64%20GNU%20as-6e4c13)](asm/pw_x86_decode.S)
 [![Alloy 6](https://img.shields.io/badge/Alloy-6.2.0-8A2BE2)](native/Trust.als)
 [![Agda](https://img.shields.io/badge/Agda-2.8.0%20safe-5e4fa2)](native/Trust.agda)
 [![Futhark](https://img.shields.io/badge/Futhark-0.29.1-5f021f)](native/geometry.fut)
@@ -22,7 +25,7 @@ The core is plain **C11 that uses only the C standard library**. It has its own 
 
 ## Features
 
-- **Zero dependencies.** The C sources include only `<stdint.h>`, `<stddef.h>`, `<string.h>`, `<stdlib.h>`, `<stdio.h>` and `<inttypes.h>`. CMake links nothing but the project's own static library.
+- **Zero dependencies.** The C sources include only `<stdint.h>`, `<stddef.h>`, `<string.h>`, `<stdlib.h>`, `<stdio.h>` and `<inttypes.h>`, plus `<ctype.h>` and `<stdarg.h>` in `pw-xasm` and `<math.h>` in its test. CMake links nothing but the project's own static libraries, plus libgfortran (and libm for the `pw-xasm` test).
 - **Built-in SHA-256.** FIPS 180-4, streaming (`init` / `update` / `final`) or one-shot.
 - **Typed IR with fixed layouts.** Every struct has a fixed size, explicit padding fields, and `_Static_assert` size checks.
 - **Canonical serialization.**
@@ -33,6 +36,7 @@ The core is plain **C11 that uses only the C standard library**. It has its own 
 - **Offline verifier.** It checks every digest, the canonical encoding, the sort order, the verdict consistency and the record-to-function links. With `--binary`, it also checks the original binary.
 - **Three-way verdicts.** Every finding is `PROVEN_COMPLIANT`, `PROVEN_VULNERABLE` or `UNKNOWN`, and an `UNKNOWN` carries an explicit reason code.
 - **Formal trust models.** Alloy 6, Agda `--safe --without-K`, Futhark and POSIX AWK.
+- **pw-xasm.** An x86-64 decoder in GNU assembler, a FORTRAN 77 parser for the `.pwxray` structs, and a C23 assembler, disassembler and lifter. It links only libc and libgfortran.
 
 ## Quick start
 
@@ -233,6 +237,160 @@ awk -f proxy.awk tests/proxy.tsv | diff -u tests/proxy.expected.tsv -
 awk -v window=300 -v limit=3 -f proxy.awk tests/proxy.tsv
 ```
 
+## `pw-xasm`: x86-64 assembler, disassembler and FORTRAN 77 struct parser
+
+`pw-xasm` combines three parts, each in its own language:
+
+- An x86-64 instruction decoder written in GNU assembler (`asm/pw_x86_decode.S`).
+- A struct parser for the `.pwxray` wire layout, written in FORTRAN 77 (`fortran/pw_struct.f`).
+- A C23 driver (`xasm/`) that adds an assembler for the same instruction subset, Intel-syntax output, and a lifter from raw code to a `.pwxray` bundle.
+
+It links against libc and libgfortran and nothing else. It builds when CMake finds a Fortran compiler on an x86-64 host.
+
+### Usage
+
+```
+pw-xasm asm <in.s> -o <out.bin> [--base ADDR]
+pw-xasm disasm <in.bin> [--base ADDR] [--listing]
+pw-xasm lift <in.bin> -o <out.pwxray> [--base ADDR] [--alloy model.als]
+pw-xasm structs <bundle.pwxray> [--ir]
+pw-xasm layout
+```
+
+- **`asm`** assembles Intel-syntax text into a flat binary.
+  - Input is one instruction per line, with `label:` definitions and `;` or `#` comments.
+  - `--base` sets the load address; the default is `0x401000`.
+- **`disasm`** prints one instruction per line, followed by `; address: bytes`. `asm` reads this output back in and produces the same bytes. `--listing` prints `offset mnemonic` pairs instead.
+- **`lift`** decodes a code blob into one `pw_ir` function and writes a `.pwxray` bundle with `pw_bundle_write`. The bundle verifies with `pw-xray-verify --binary <in.bin>`. See [How `lift` builds the bundle](#how-lift-builds-the-bundle).
+- **`structs`** decodes a `.pwxray` file through the Fortran routines and prints:
+  - the file size and its Adler-32;
+  - the manifest and every evidence record and function header, field by field;
+  - record statistics.
+
+  It checks that every padding and reserved field in the file is zero. `--ir` also prints every block and instruction. The exit status is 1 if any padding byte is nonzero.
+- **`layout`** prints the Fortran layout table: every field's offset, size and padding flag, for all six structs.
+
+### Supported instruction subset (x86-64)
+
+| Encoding | Instructions |
+| --- | --- |
+| `90`, `C3`, `CC` | `nop`, `ret`, `int3` |
+| `50+r`, `58+r` | `push r64`, `pop r64` |
+| `B8+r` | `mov r32, imm32`; with REX.W: `movabs r64, imm64` |
+| `01 03`, `09 0B`, `21 23`, `29 2B`, `31 33`, `39 3B` | `add`, `or`, `and`, `sub`, `xor`, `cmp`: r/m,reg and reg,r/m |
+| `85` | `test r/m, reg` |
+| `89`, `8B` | `mov r/m, reg` and `mov reg, r/m` |
+| `8D` | `lea reg, [mem]` |
+| `83 /0,1,4,5,6,7` | `add or and sub xor cmp r/m, imm8` |
+| `81 /0,1,4,5,6,7` | `add or and sub xor cmp r/m, imm32` |
+| `C7 /0` | `mov r/m, imm32` |
+| `FF /2`, `FF /4` | `call r/m64`, `jmp r/m64` |
+| `E8`, `E9`, `EB` | `call rel32`, `jmp rel32`, `jmp short rel8` |
+| `70`–`7F`, `0F 80`–`0F 8F` | `jo jno jb jae je jne jbe ja js jns jp jnp jl jge jle jg`, with rel8 (`short`) or rel32 |
+
+**Operands**
+
+- Registers: `rax`–`r15` and `eax`–`r15d`. The operand size comes from REX.W.
+- Memory: `[base + index*scale + disp]`, `[index*scale + disp]`, `[disp32]` and `[rip + disp32]`, with an optional `qword ptr` or `dword ptr`.
+
+**Decoding**
+
+- The decoder handles REX prefixes, ModRM, SIB, and disp8/disp32 displacements. It rejects anything outside the subset, any instruction longer than 15 bytes, and truncated input.
+- Branch targets print as absolute addresses. `short` selects the rel8 form.
+
+**Encoding**
+
+The assembler picks the encoding GNU as uses for the same text:
+
+- For reg,reg it uses the r/m,reg opcode.
+- It uses `83` when the immediate fits in 8 bits.
+- It picks the shortest displacement, adding a SIB byte for `rsp`/`r12` bases and a zero disp8 for `rbp`/`r13`.
+- `mov r64, imm` uses `C7 /0`, or `movabs` if the value does not fit in a sign-extended imm32.
+
+### How `lift` builds the bundle
+
+**IR mapping**
+
+| x86-64 | `PW_OP_*` |
+| --- | --- |
+| `add`, `lea`, register-to-register `mov` | `ADD` |
+| `sub` / `xor` / `and` / `or` | `SUB` / `XOR` / `AND` / `OR` |
+| `cmp`, `test` | `CMP_EQ` |
+| `mov reg, imm`, `movabs` | `CONST` |
+| `mov reg, [mem]`, `pop` | `LOAD` |
+| `mov [mem], reg`, `mov [mem], imm`, `push` | `STORE` |
+| `call rel32` / `call r/m` | `CALL_DIR` / `CALL_IND` |
+| `jmp` / `jcc` | `BR` / `BR_COND` |
+| `ret` | `RET` |
+| `nop`, `int3` | `NOP` |
+
+**Operands**
+
+- Register operands are SSA operands whose `ref_id` is the register number (0–15).
+- Memory operands become the base register plus an immediate displacement.
+- Branch operands name the target block.
+
+**Blocks**
+
+- Blocks start at the entry, at every in-blob branch target, and after every `jmp`, `jcc` and `ret`.
+- Successor edges are sorted.
+
+**Evidence records**
+
+- Every `call r/m` produces an `UNKNOWN` record (`INDIRECT_CALL_TARGET`), and every `jmp r/m` produces one with `STRIPPED_JUMP_TABLE`. Both use rule `TRUST_BOUNDARY_CROSS`, and each record is linked to the function digest.
+- The manifest records `arch = X86_64` and `container_format = 1`.
+
+### FORTRAN 77 struct parser (`fortran/pw_struct.f`)
+
+The parser is fixed-form FORTRAN 77, built with `gfortran -std=legacy`. Every routine is a plain external, and the C prototypes are in `xasm/pw_fortran.h`.
+
+**Calling from C:** use the lower-case name plus `_`. Every argument is passed by reference: `INTEGER` → `int32_t *`, `INTEGER*8` → `int64_t *`, `INTEGER*1` → `uint8_t *`, `DOUBLE PRECISION` → `double *`. A `CHARACTER*(*)` argument adds a hidden `size_t` length after the other arguments.
+
+`KIND` selects the struct:
+
+| `KIND` | Struct | Size |
+| --- | --- | --- |
+| 1 | `pw_operand_t` | 16 |
+| 2 | `pw_ir_inst_t` | 64 |
+| 3 | `pw_ir_block_t` | 32 |
+| 4 | `pw_ir_func_hdr_t` | 64 |
+| 5 | `pw_evidence_record_t` | 64 |
+| 6 | `pw_evidence_manifest_t` | 192 |
+
+`IERR` is 0 on success, 1 for a bad `KIND`, 2 for a short buffer and 3 for a bad field index.
+
+| Routine | Purpose |
+| --- | --- |
+| `PWLAYT(KIND, I, IOFF, ISIZ, IPAD, IERR)` | Layout table entry for field `I`: offset, size, and whether it is padding. With `I = 0` it returns the field count and the struct size. |
+| `PWFNAM(KIND, I, NAME)` | C field name of field `I`. |
+| `PWGETN(B, IOFF, N)` / `PWPUTN(B, IOFF, N, V)` | Read or write an `N`-byte little-endian integer. |
+| `PWDEC(KIND, B, NB, VALS, NV, IERR)` | Decode a struct into `INTEGER*8` values in field order. 32-byte digests come out as four 64-bit lanes. |
+| `PWENC(KIND, VALS, B, NB, IERR)` | Encode values back into bytes. Padding is always written as zero. |
+| `PWVAL(KIND, B, NB, IBAD, IERR)` | Index of the first nonzero padding or reserved field, or 0. |
+| `PWADL(B, N)` | Adler-32 checksum. |
+| `PWRST(B, NREC, ISTAT, DSTAT)` | Statistics over packed evidence records (below). |
+
+`PWRST` reports:
+
+- counts per verdict and per unknown reason;
+- the number of invalid verdicts and the number of records with nonzero padding;
+- the mean, population variance, minimum and maximum of `detected_bytes` and `required_bytes` (Welford);
+- how many records have `required_bytes > detected_bytes`, and the total shortfall.
+
+### Tests
+
+- **`xasm_encodings_roundtrip_fortran_lift`:**
+  - known encodings, byte for byte;
+  - assemble → disassemble → reassemble over `tests/xasm/corpus.s`;
+  - 200,000 random byte strings, where every decodable one must give the same text after format → assemble → decode → format;
+  - Fortran layout against `offsetof` / `sizeof`;
+  - `PWDEC`/`PWENC` round trip on every struct in a demo bundle, plus `PWVAL` on corrupted padding;
+  - Adler-32, and `PWRST` against a C reference;
+  - lift → `pw_bundle_verify`.
+- **`xasm_cli_roundtrip_lift_verify`:** the same round trip and lift through the CLI and `pw-xray-verify`.
+- **`xasm_objdump_crosscheck`:** GNU `objdump -d` must agree with the decoder on every instruction offset and mnemonic in the corpus.
+- **`xasm_fortran_layout`** and **`xasm_fortran_structs_demo_bundle`:** run `pw-xasm layout` and `pw-xasm structs` on the demo bundle.
+
 ## The .pwxray format
 
 A bundle is one flat, little-endian file:
@@ -282,7 +440,11 @@ Canonicalization rules:
 include/pandawatch/   IR, evidence, SHA-256, bundle and demo headers
 src/                  SHA-256, canonical serializers, bundle writer and verifier, demo fixture, file I/O
 tools/                pw-xray, pw-xray-verify
+xasm/                 pw-xasm (C23): assembler, Intel-syntax formatter, lifter, CLI
+asm/                  x86-64 decoder (GNU assembler)
+fortran/              FORTRAN 77 struct parser
 tests/                ctest suite and golden digest fixture
+tests/xasm/           pw-xasm tests, instruction corpus, objdump cross-check
 native/               Trust.als, Trust.agda, geometry.fut, proxy.awk, tests/*.tsv
 ci/                   Alloy result checker (AWK)
 docs/                 specification and original native README
@@ -292,6 +454,7 @@ docs/                 specification and original native README
 ## Build requirements
 
 - **C engine:** a C11 compiler (gcc or clang) and CMake 3.16 or newer. Nothing else is needed.
+- **pw-xasm:** an x86-64 host, a C23 compiler (gcc or clang), gfortran, and CMake 3.21 or newer. The objdump cross-check needs GNU binutils.
 - **Alloy model:** Alloy 6 (`org.alloytools.alloy.dist.jar`) and Java 21.
 - **Agda proofs:** Agda 2.8.
 - **Futhark kernels:** Futhark 0.29.

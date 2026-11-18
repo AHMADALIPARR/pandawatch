@@ -82,3 +82,67 @@ if(BUILD_TESTING)
   add_test(NAME cli_inspect_bundle COMMAND pw-xray inspect ${CMAKE_CURRENT_BINARY_DIR}/demo.pwxray)
   set_tests_properties(cli_inspect_bundle PROPERTIES DEPENDS cli_demo_bundle)
 endif()
+
+# pw-xasm: x86-64 subset decoder in GNU assembler, FORTRAN 77 struct parser,
+# C23 driver. Built when a Fortran compiler is present on an x86-64 host.
+option(PW_XASM "Build pw-xasm (x86-64 decoder in asm, FORTRAN 77 struct parser, C23)" ON)
+if(PW_XASM)
+  include(CheckLanguage)
+  check_language(Fortran)
+  if(NOT CMAKE_Fortran_COMPILER)
+    message(STATUS "pw-xasm: no Fortran compiler found, not built")
+  elseif(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    message(STATUS "pw-xasm: decoder is x86-64 assembly, not built on ${CMAKE_SYSTEM_PROCESSOR}")
+  elseif(CMAKE_VERSION VERSION_LESS 3.21)
+    message(STATUS "pw-xasm: needs CMake >= 3.21 for C23, not built")
+  else()
+    enable_language(Fortran)
+    enable_language(ASM)
+
+    add_library(pw_struct_f77 STATIC fortran/pw_struct.f)
+    target_compile_options(pw_struct_f77 PRIVATE -std=legacy -ffixed-form -Wall -Wno-conversion)
+
+    add_library(pw_xasm_core STATIC
+      asm/pw_x86_decode.S
+      xasm/pw_x86_text.c
+      xasm/pw_x86_asm.c
+      xasm/pw_x86_lift.c)
+    set_target_properties(pw_xasm_core PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    target_include_directories(pw_xasm_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/xasm)
+    target_compile_options(pw_xasm_core PRIVATE $<$<COMPILE_LANGUAGE:C>:${PW_WARN}>)
+    target_link_libraries(pw_xasm_core PUBLIC pandawatch pw_struct_f77)
+
+    add_executable(pw-xasm xasm/pw_xasm_main.c)
+    set_target_properties(pw-xasm PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+                                             LINKER_LANGUAGE Fortran)
+    target_compile_options(pw-xasm PRIVATE ${PW_WARN})
+    target_link_libraries(pw-xasm PRIVATE pw_xasm_core)
+    install(TARGETS pw-xasm RUNTIME DESTINATION bin)
+
+    if(BUILD_TESTING)
+      add_executable(test_xasm tests/xasm/test_xasm.c)
+      set_target_properties(test_xasm PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF
+                                                 LINKER_LANGUAGE Fortran)
+      target_include_directories(test_xasm PRIVATE ${PW_TEST_INC})
+      target_compile_options(test_xasm PRIVATE ${PW_WARN})
+      target_link_libraries(test_xasm PRIVATE pw_xasm_core m)
+
+      set(PW_XASM_CORPUS ${CMAKE_CURRENT_SOURCE_DIR}/tests/xasm/corpus.s)
+      add_test(NAME xasm_encodings_roundtrip_fortran_lift COMMAND test_xasm ${PW_XASM_CORPUS})
+      add_test(NAME xasm_cli_roundtrip_lift_verify
+        COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/xasm/cli_roundtrip.sh
+                $<TARGET_FILE:pw-xasm> $<TARGET_FILE:pw-xray-verify> ${PW_XASM_CORPUS}
+                ${CMAKE_CURRENT_BINARY_DIR}/xasm-cli)
+      add_test(NAME xasm_fortran_layout COMMAND pw-xasm layout)
+      add_test(NAME xasm_fortran_structs_demo_bundle
+        COMMAND pw-xasm structs ${CMAKE_CURRENT_BINARY_DIR}/demo.pwxray --ir)
+      set_tests_properties(xasm_fortran_structs_demo_bundle PROPERTIES DEPENDS cli_demo_bundle)
+      find_program(PW_OBJDUMP objdump)
+      if(PW_OBJDUMP)
+        add_test(NAME xasm_objdump_crosscheck
+          COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/xasm/objdump_crosscheck.sh
+                  $<TARGET_FILE:pw-xasm> ${PW_XASM_CORPUS} ${CMAKE_CURRENT_BINARY_DIR}/xasm-objdump)
+      endif()
+    endif()
+  endif()
+endif()
