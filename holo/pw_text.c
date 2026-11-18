@@ -278,12 +278,12 @@ bool pw_utf8_valid(const uint8_t *d, size_t n) {
     return true;
 }
 
-char *pw_decode_text(const uint8_t *d, size_t n, size_t *out_len) {
+static char *decode(const uint8_t *d, size_t n, size_t *out_len, bool newlines) {
     pw_buf b = {0};
     pw_buf_put(&b, "", 0);
     size_t i = 0, bad;
     while (i < n) {
-        if (d[i] == '\r') {
+        if (newlines && d[i] == '\r') {
             pw_buf_putc(&b, '\n');
             i += (i + 1 < n && d[i + 1] == '\n') ? 2 : 1;
             continue;
@@ -299,6 +299,9 @@ char *pw_decode_text(const uint8_t *d, size_t n, size_t *out_len) {
     }
     return pw_buf_take(&b, out_len);
 }
+
+char *pw_decode_text(const uint8_t *d, size_t n, size_t *out_len) { return decode(d, n, out_len, true); }
+char *pw_decode_utf8(const uint8_t *d, size_t n, size_t *out_len) { return decode(d, n, out_len, false); }
 
 char *pw_read_text(const char *path, size_t *len) {
     size_t n;

@@ -61,6 +61,8 @@ size_t pw_cp_index(const char *s, size_t off);
 [[nodiscard]] uint8_t *pw_slurp(const char *path, size_t *len);
 /* UTF-8 with errors="replace" and universal newlines, NUL-terminated. */
 [[nodiscard]] char *pw_decode_text(const uint8_t *d, size_t n, size_t *out_len);
+/* bytes.decode("utf-8", errors="replace"), no newline translation. */
+[[nodiscard]] char *pw_decode_utf8(const uint8_t *d, size_t n, size_t *out_len);
 [[nodiscard]] char *pw_read_text(const char *path, size_t *len);
 /* Strict UTF-8 check (bytes.decode("utf-8") succeeds). */
 bool pw_utf8_valid(const uint8_t *d, size_t n);
