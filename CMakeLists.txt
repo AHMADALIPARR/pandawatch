@@ -146,3 +146,37 @@ if(PW_XASM)
     endif()
   endif()
 endif()
+
+# Holo tools (C23): rblob (Rust crate -> .rblob -> functors). Shared code:
+# Python-re-compatible regex subset, json.dumps-compatible JSON, text/path
+# helpers. libc + POSIX only.
+option(PW_HOLO "Build the C23 holo tools (rblob)" ON)
+if(PW_HOLO AND CMAKE_VERSION VERSION_LESS 3.21)
+  message(STATUS "holo tools: need CMake >= 3.21 for C23, not built")
+elseif(PW_HOLO)
+  add_library(pw_holo_core STATIC
+    holo/pw_re.c
+    holo/pw_json.c
+    holo/pw_text.c
+    holo/pw_rblob.c)
+  set_target_properties(pw_holo_core PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_include_directories(pw_holo_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/holo)
+  target_compile_options(pw_holo_core PRIVATE ${PW_WARN})
+  target_link_libraries(pw_holo_core PUBLIC pandawatch)
+
+  add_executable(rblob holo/rblob_main.c)
+  set_target_properties(rblob PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(rblob PRIVATE ${PW_WARN})
+  target_link_libraries(rblob PRIVATE pw_holo_core)
+  install(TARGETS rblob RUNTIME DESTINATION bin)
+
+  if(BUILD_TESTING)
+    # Expected digest of the rust_ledger blob (same bytes as the reference
+    # rust_ingestor run on this fixture).
+    set(PW_RUST_LEDGER_SHA256 64223e263fc87a910d37954fc048e45766ba9d02dc159b9a3543d141f57ec76a)
+    add_test(NAME rblob_rust_ledger_ingest_verify_disassemble
+      COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/holo/rblob_cli.sh
+              $<TARGET_FILE:rblob> ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rust_ledger
+              ${PW_RUST_LEDGER_SHA256} ${CMAKE_CURRENT_BINARY_DIR}/rblob-cli)
+  endif()
+endif()

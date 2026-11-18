@@ -86,6 +86,31 @@ jobs:
           ./build/pw-xray-verify corpus.pwxray --binary corpus.bin
           ./build/pw-xasm structs corpus.pwxray
 
+  holo:
+    name: holo tools (C23, ${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: ${{ matrix.cc }} --version && cmake --version
+      - name: Configure (C23, -Wall -Wextra -Wpedantic -Werror)
+        run: cmake -S . -B build -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPW_XASM=OFF
+      - name: Build
+        run: cmake --build build -j1
+      - name: Require the holo targets
+        run: test -x build/rblob
+      - name: ctest (holo)
+        run: ctest --test-dir build --output-on-failure -V -R 'rblob'
+      - name: rblob CLI on the rust_ledger fixture
+        run: |
+          ./build/rblob ingest tests/fixtures/rust_ledger -o out/rust_ledger.rblob
+          ./build/rblob verify out/rust_ledger.rblob
+          ./build/rblob disassemble out/rust_ledger.rblob
+
   awk-oracle:
     runs-on: ubuntu-latest
     steps:
