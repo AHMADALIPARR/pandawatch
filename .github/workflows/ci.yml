@@ -190,7 +190,9 @@ jobs:
           path: out/reversed
       - name: opam install coq-compcert
         run: |
+          git config --global --add safe.directory '*'
           eval $(opam env)
+          opam repo remove archive --all || true
           opam update
           opam install coq-compcert
           coqc --version

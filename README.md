@@ -25,7 +25,7 @@ The core is plain **C11 that uses only the C standard library**. It has its own 
 
 ## Features
 
-- **Zero dependencies.** The C sources include only `<stdint.h>`, `<stddef.h>`, `<string.h>`, `<stdlib.h>`, `<stdio.h>` and `<inttypes.h>`, plus `<ctype.h>` and `<stdarg.h>` in `pw-xasm` and `<math.h>` in its test. CMake links nothing but the project's own static libraries, plus libgfortran (and libm for the `pw-xasm` test).
+- **Zero dependencies.** The C sources include only `<stdint.h>`, `<stddef.h>`, `<string.h>`, `<stdlib.h>`, `<stdio.h>` and `<inttypes.h>`, plus `<ctype.h>` and `<stdarg.h>` in `pw-xasm` and `<math.h>` in its test. The holo tools also include `<stdbool.h>`, `<stdarg.h>`, `<errno.h>` and `<math.h>`, and the POSIX headers `<dirent.h>`, `<sys/stat.h>`, `<sys/types.h>` and `<strings.h>`. CMake links nothing but the project's own static libraries, plus libgfortran (and libm for the `pw-xasm` test).
 - **Built-in SHA-256.** FIPS 180-4, streaming (`init` / `update` / `final`) or one-shot.
 - **Typed IR with fixed layouts.** Every struct has a fixed size, explicit padding fields, and `_Static_assert` size checks.
 - **Canonical serialization.**
@@ -37,6 +37,7 @@ The core is plain **C11 that uses only the C standard library**. It has its own 
 - **Three-way verdicts.** Every finding is `PROVEN_COMPLIANT`, `PROVEN_VULNERABLE` or `UNKNOWN`, and an `UNKNOWN` carries an explicit reason code.
 - **Formal trust models.** Alloy 6, Agda `--safe --without-K`, Futhark and POSIX AWK.
 - **pw-xasm.** An x86-64 decoder in GNU assembler, a FORTRAN 77 parser for the `.pwxray` structs, and a C23 assembler, disassembler and lifter. It links only libc and libgfortran.
+- **Holo tools.** `rblob` (Rust crate → verified `.rblob` → functors), `bsm` (C, COBOL, SQLite, assembly, ELF and Rust → `.holo.wasm` with SHA-256-addressed `holo.*` sections) and `holo-reverse` (`.holo.wasm` → C23 header, CompCert `.v`, Lean 4 HoloDSL), in C23.
 
 ## Quick start
 
@@ -391,6 +392,117 @@ The parser is fixed-form FORTRAN 77, built with `gfortran -std=legacy`. Every ro
 - **`xasm_objdump_crosscheck`:** GNU `objdump -d` must agree with the decoder on every instruction offset and mnemonic in the corpus.
 - **`xasm_fortran_layout`** and **`xasm_fortran_structs_demo_bundle`:** run `pw-xasm layout` and `pw-xasm structs` on the demo bundle.
 
+## Holo tools (C23): `rblob`, `bsm`, `holo-reverse`
+
+The three tools are in `holo/` and build with the engine (CMake option `PW_HOLO`, on by default). They share a regex engine (`pw_re`), a JSON reader and writer (`pw_json`), text and path helpers (`pw_text`) and an argparse-style command line (`pw_cli.h`). Every JSON document they write is canonical: object keys in a fixed order, `\uXXXX` escapes for non-ASCII text, and compact separators inside binary payloads.
+
+### `rblob`: Rust crate → `.rblob` → functors
+
+```sh
+rblob ingest CRATE_PATH -o OUTPUT      # crate directory or one .rs file -> .rblob
+rblob verify BLOB_FILE                 # SHA-256 and structure check, JSON report
+rblob disassemble BLOB_FILE            # verify, then print the functors as JSON
+```
+
+`ingest` reads `Cargo.toml` (package name and version) and every `*.rs` file under `src/` in sorted order, or a single `.rs` file. From the comment-stripped source it extracts:
+
+- **structs:** name, `#[repr(...)]`, fields with type, size, alignment and offset, and the total ABI size and alignment;
+- **functions:** name, parameters, return type, `impl` owner and implemented trait;
+- **traits** and **`macro_rules!`** names.
+
+The blob layout is:
+
+| Offset | Bytes | Content |
+| --- | --- | --- |
+| 0 | 6 | magic `"RBLB" 01 00` |
+| 6 | 32 | SHA-256 of the payload |
+| 38 | 4 | payload length, uint32 little-endian |
+| 42 | n | payload: the crate IR as canonical JSON (sorted keys, compact) |
+
+`disassemble` turns the crate IR into one functor per struct and one module functor:
+
+- `Functor_<Struct>`: object map `f_obj` with the repr and ABI layout, morphism map `f_mor` with the struct's `impl` functions (trait, domain, codomain), functor laws and a Lean 4 signature;
+- `Functor_<crate>_Module`: `f_obj` with the crate name, version, traits and macros, and `f_mor` with the free functions.
+
+### `bsm`: legacy inputs → `.holo.wasm`
+
+```sh
+bsm pack INPUT... -o OUTPUT [--abi lp64|wasm32]   # analyze inputs, write a .holo.wasm module
+bsm inspect WASM_FILE [--json]                    # validate a module, print a summary or the full JSON
+```
+
+Each input is dispatched by suffix or magic number:
+
+| Input | Extracted |
+| --- | --- |
+| C (`.c`, `.h`, `.cpp`, `.hpp`) | `struct` / `union` layouts (field offsets, sizes, alignment, padding) for the `lp64` or `wasm32` ABI, primitive `typedef`s, function prototypes |
+| COBOL (`.cbl`, `.cob`, `.cpy`) | record layouts from level numbers: `PIC` / `PICTURE` sizes, `COMP`, `COMP-3` packed decimal, `OCCURS`, `REDEFINES` overlays |
+| SQLite (`.db`, `.sqlite`, `.sqlite3` or `SQLite format 3` magic) | the file format read directly: schema table b-tree, column names, declared types, `NOT NULL`, primary keys, foreign keys, indexes, row counts |
+| SQL DDL (`.sql`) | the script executed against an in-memory schema model (`CREATE TABLE` / `INDEX`, `INSERT ... VALUES`, `DROP`, `ALTER TABLE ADD COLUMN`, `DELETE`), then the same table records as for a database file |
+| Assembly (`.s`, `.asm`) | functions, basic blocks, successor edges, calls, cyclomatic complexity, stack frame size |
+| ELF (`.elf`, `.o`, `.so` or `\x7fELF` magic) | ELF32 / ELF64 header, section headers, `.symtab` and `.dynsym` symbols; on x86-64 hosts, per-function CFGs decoded by `asm/pw_x86_decode.S` |
+| Rust (crate directory, `.rs`, `.rblob`) | the `rblob` functors: struct layouts as records, methods as symbols, and the functors themselves |
+
+After ingestion, symbols whose names match after lowercasing and keeping only letters and digits are joined by a cross-link when they come from more than one source kind. Each link holds the canonical name and its `kind:name (file)` entities.
+
+The module is WebAssembly 1.0. Standard sections: type, function, memory, export (`memory`, `holo_version`, `holo_layer_count`, `holo_manifest_ptr`, `holo_manifest_len`), code, and a data segment holding the manifest at linear-memory offset `0x1000`. Custom sections, in order:
+
+| Section | Content |
+| --- | --- |
+| `holo.manifest` | format `wasm-holo/1.0`, root SHA-256, sources, stats, and the byte size and SHA-256 of every layer |
+| `holo.types` | every record with its fields |
+| `holo.layouts` | name, source, size, alignment, padding and fields of every record |
+| `holo.cfg` | control-flow graphs |
+| `holo.symbols` | ELF headers, symbols and cross-links |
+| `holo.functors` | the Rust functors (present when a Rust input was packed) |
+
+The root SHA-256 is the digest of the layer digests concatenated in sorted layer-name order. `inspect` recomputes every layer digest and prints `Integrity Verified: True` when all of them match the manifest.
+
+### `holo-reverse`: `.holo.wasm` → C23, CompCert, Lean 4
+
+```sh
+holo-reverse WASM_FILE --out-dir DIR [--lean-import MODULE]
+```
+
+The module must pass the `bsm inspect` integrity check. From `holo.layouts` and `holo.cfg` it writes three files to `DIR`:
+
+- **`holo_reversed_c23.h`:** one `typedef struct Holo_<source>_<record>` per record, with explicit `_pad_N` and `_tail_pad` members, `alignas`, `OVERLAY` comments for overlapping fields, and `static_assert` checks on `sizeof` and every `offsetof`. It also defines the recursive `HoloNode` type and the `HOLO_LAYER_COUNT` and `HOLO_CFG_COUNT` constants. The header compiles as C23 and as C11.
+- **`holo_compcert.v`:** CompCert `Ctypes` composite definitions (`Composite ... Struct` with `Member_plain` members) and a witness record with the expected size and alignment of every record.
+- **`HoloDSL.lean`:** a `rust_struct!` record and a `wa_holo!` layout theorem per record. By default the file starts with the HoloDSL definitions. With `--lean-import MODULE` it imports `MODULE` instead (for example `HoloDSL.HoloDSL_checked`) and places the records in namespace `HoloReversed`.
+
+[`include/pandawatch/holo_reversed_c23.h`](include/pandawatch/holo_reversed_c23.h) is a reversed header for the account-record fixtures; [`include/pandawatch/holo_reversed_c23_checked.h`](include/pandawatch/holo_reversed_c23_checked.h) is the same header for builds with `-Wpedantic`.
+
+### Lean 4 HoloDSL (`lean/`)
+
+`lean/` is a Lake project for the current stable Lean 4 (`lean/lean-toolchain`); it imports only `Lean`.
+
+```sh
+cd lean && lake build
+```
+
+[`lean/HoloDSL/HoloDSL_checked.lean`](lean/HoloDSL/HoloDSL_checked.lean) defines:
+
+- `FieldSpec` (name, offset, size, alignment) and `HoloRecord` (name, total size, alignment, fields);
+- `FieldSpec.within`, `HoloRecord.allWithin` (every field ends inside the record) and `HoloRecord.aligned` (positive alignment that divides the size), each decidable;
+- `rust_struct! Name { field : ty @ offset : size align a, ... } size N align A`, which defines a `HoloRecord`;
+- `wa_holo! Thm ("holo.layouts") => Name`, which states `HoloRecord.allWithin Name ∧ HoloRecord.aligned Name` as a theorem and proves it by `decide`.
+
+The file ends with the starter records (`c_AccountRecord`, `c_parts`, `cobol_ACCOUNT_RECORD`, `sqlite_account_record`, `sqlite_transactions`) and their theorems. The `HoloReversed` library target builds a `holo-reverse --lean-import HoloDSL.HoloDSL_checked` output saved as `lean/HoloReversed.lean`:
+
+```sh
+holo-reverse ledger.holo.wasm --out-dir out --lean-import HoloDSL.HoloDSL_checked
+cp out/HoloDSL.lean lean/HoloReversed.lean
+cd lean && lake build HoloReversed
+```
+
+The original DSL starter is [`docs/source/holo_dsl_starter.txt`](docs/source/holo_dsl_starter.txt). It is split into [`lean/HoloDSL/HoloDSL.lean`](lean/HoloDSL/HoloDSL.lean) and [`coq/HoloLayout.v`](coq/HoloLayout.v).
+
+### Tests
+
+- **`rblob_rust_ledger_ingest_verify_disassemble`:** ingest, verify and disassemble `tests/fixtures/rust_ledger` against its committed blob digest, plus rejection of a tampered blob.
+- **`bsm_pack_inspect_fixtures`:** pack the C, COBOL, SQL and assembly fixtures in `tests/fixtures/bsm` for both ABIs against committed module digests. It also inspects the modules, packs the Rust crate, a SQLite database built by the `sqlite3` CLI and the x86-64 ELF built from `ledger_elf.S`, and checks usage errors.
+- **`holo_reverse_c23_compcert_lean`:** reverse the packed fixtures against committed digests of the three files, compile the header as C11, check `--lean-import` output and refuse a tampered module.
+
 ## The .pwxray format
 
 A bundle is one flat, little-endian file:
@@ -445,6 +557,11 @@ asm/                  x86-64 decoder (GNU assembler)
 fortran/              FORTRAN 77 struct parser
 tests/                ctest suite and golden digest fixture
 tests/xasm/           pw-xasm tests, instruction corpus, objdump cross-check
+holo/                 rblob, bsm, holo-reverse (C23)
+tests/holo/           holo tool tests
+tests/fixtures/       rust_ledger crate, bsm fixtures (C, COBOL, SQL, assembly, ELF source)
+lean/                 Lean 4 HoloDSL (Lake project)
+coq/                  HoloLayout.v (CompCert Ctypes layouts)
 native/               Trust.als, Trust.agda, geometry.fut, proxy.awk, tests/*.tsv
 ci/                   Alloy result checker (AWK)
 docs/                 specification and original native README
@@ -455,6 +572,9 @@ docs/                 specification and original native README
 
 - **C engine:** a C11 compiler (gcc or clang) and CMake 3.16 or newer. Nothing else is needed.
 - **pw-xasm:** an x86-64 host, a C23 compiler (gcc or clang), gfortran, and CMake 3.21 or newer. The objdump cross-check needs GNU binutils.
+- **Holo tools:** a C23 compiler (gcc or clang) and CMake 3.21 or newer. The `bsm` test also uses the `sqlite3` CLI to build its database fixture when it is installed.
+- **Lean HoloDSL:** Lean 4 with Lake (`lean/lean-toolchain`).
+- **Coq layouts:** Coq 8.20 and CompCert's Coq library (`opam install coq-compcert`).
 - **Alloy model:** Alloy 6 (`org.alloytools.alloy.dist.jar`) and Java 21.
 - **Agda proofs:** Agda 2.8.
 - **Futhark kernels:** Futhark 0.29.
