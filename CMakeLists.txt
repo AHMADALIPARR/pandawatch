@@ -150,7 +150,7 @@ endif()
 # Holo tools (C23): rblob (Rust crate -> .rblob -> functors). Shared code:
 # Python-re-compatible regex subset, json.dumps-compatible JSON, text/path
 # helpers. libc + POSIX only.
-option(PW_HOLO "Build the C23 holo tools (rblob)" ON)
+option(PW_HOLO "Build the C23 holo tools (rblob, bsm)" ON)
 if(PW_HOLO AND CMAKE_VERSION VERSION_LESS 3.21)
   message(STATUS "holo tools: need CMake >= 3.21 for C23, not built")
 elseif(PW_HOLO)
@@ -178,5 +178,52 @@ elseif(PW_HOLO)
       COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/holo/rblob_cli.sh
               $<TARGET_FILE:rblob> ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rust_ledger
               ${PW_RUST_LEDGER_SHA256} ${CMAKE_CURRENT_BINARY_DIR}/rblob-cli)
+  endif()
+
+  # bsm: legacy inputs (C, COBOL, SQLite, assembly, ELF, Rust) -> .holo.wasm.
+  # On x86-64 the ELF CFG comes from the asm decoder in asm/pw_x86_decode.S.
+  set(PW_BSM_SOURCES
+    holo/bsm_main.c
+    holo/pw_bsm.c
+    holo/pw_bsm_elf.c
+    holo/pw_bsm_wasm.c
+    holo/pw_sqlite.c)
+  set(PW_BSM_X86 OFF)
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    enable_language(ASM)
+    set(PW_BSM_X86 ON)
+    list(APPEND PW_BSM_SOURCES asm/pw_x86_decode.S xasm/pw_x86_text.c)
+  endif()
+  add_executable(bsm ${PW_BSM_SOURCES})
+  set_target_properties(bsm PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(bsm PRIVATE $<$<COMPILE_LANGUAGE:C>:${PW_WARN}>)
+  target_include_directories(bsm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/xasm)
+  if(PW_BSM_X86)
+    target_compile_definitions(bsm PRIVATE PW_BSM_X86)
+  endif()
+  target_link_libraries(bsm PRIVATE pw_holo_core)
+  install(TARGETS bsm RUNTIME DESTINATION bin)
+
+  if(BUILD_TESTING)
+    # Digests of the reference packer's modules for account.h, account.cpy,
+    # ledger.sql and ledger.s (lp64 and wasm32 ABIs).
+    set(PW_BSM_SHA256_LP64 cc66e468c56b3346d859eeb3059cdb75d26a443182da30d026ff2d2e4fb4ff6b)
+    set(PW_BSM_SHA256_WASM32 d6190fa20e48cd76d58e9f206614fa20aa7c5621abd83eb33880edfacc530d1a)
+    set(PW_BSM_ELF_CC -)
+    if(PW_BSM_X86 AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      set(PW_BSM_ELF_CC ${CMAKE_C_COMPILER})
+    endif()
+    find_program(PW_SQLITE3_CLI sqlite3)
+    set(PW_BSM_SQLITE -)
+    if(PW_SQLITE3_CLI)
+      set(PW_BSM_SQLITE ${PW_SQLITE3_CLI})
+    endif()
+    add_test(NAME bsm_pack_inspect_fixtures
+      COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/holo/bsm_cli.sh
+              $<TARGET_FILE:bsm> ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/bsm
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rust_ledger
+              ${CMAKE_CURRENT_BINARY_DIR}/bsm-cli
+              ${PW_BSM_SHA256_LP64} ${PW_BSM_SHA256_WASM32}
+              ${PW_BSM_ELF_CC} ${PW_BSM_SQLITE})
   endif()
 endif()
