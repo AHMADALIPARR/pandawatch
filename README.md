@@ -468,7 +468,7 @@ The module must pass the `bsm inspect` integrity check. From `holo.layouts` and 
 
 - **`holo_reversed_c23.h`:** one `typedef struct Holo_<source>_<record>` per record, with explicit `_pad_N` and `_tail_pad` members, `alignas`, `OVERLAY` comments for overlapping fields, and `static_assert` checks on `sizeof` and every `offsetof`. It also defines the recursive `HoloNode` type and the `HOLO_LAYER_COUNT` and `HOLO_CFG_COUNT` constants. The header compiles as C23 and as C11.
 - **`holo_compcert.v`:** CompCert `Ctypes` composite definitions (`Composite ... Struct` with `Member_plain` members) and a witness record with the expected size and alignment of every record.
-- **`HoloDSL.lean`:** a `rust_struct!` record and a `wa_holo!` layout theorem per record. By default the file starts with the HoloDSL definitions. With `--lean-import MODULE` it imports `MODULE` instead (for example `HoloDSL.HoloDSL_checked`) and places the records in namespace `HoloReversed`.
+- **`HoloDSL.lean`:** a `rust_struct!` record and a layout theorem per record. By default the file starts with the HoloDSL definitions and uses `wa_holo!`. With `--lean-import MODULE` it imports `MODULE` instead (for example `HoloDSL.HoloDSL_checked`) and places the records in namespace `HoloReversed`; a non-overlapping record is witnessed with `wa_holo!`, and a record with overlapping fields (COBOL `REDEFINES`, C unions) is witnessed with a theorem on `allWithin` and `aligned`.
 
 [`include/pandawatch/holo_reversed_c23.h`](include/pandawatch/holo_reversed_c23.h) is a reversed header for the account-record fixtures; [`include/pandawatch/holo_reversed_c23_checked.h`](include/pandawatch/holo_reversed_c23_checked.h) is the same header for builds with `-Wpedantic`.
 
@@ -484,10 +484,14 @@ cd lean && lake build
 
 - `FieldSpec` (name, offset, size, alignment) and `HoloRecord` (name, total size, alignment, fields);
 - `FieldSpec.within`, `HoloRecord.allWithin` (every field ends inside the record) and `HoloRecord.aligned` (positive alignment that divides the size), each decidable;
+- `FieldSpec.disjoint` (one field ends at or before the other starts), `HoloRecord.nonOverlapping` (every pair of fields is disjoint) and `HoloRecord.contiguous` (fields packed from offset 0 through `totalSize`, with no hidden gaps or trailing padding), each decidable;
 - `rust_struct! Name { field : ty @ offset : size align a, ... } size N align A`, which defines a `HoloRecord`;
-- `wa_holo! Thm ("holo.layouts") => Name`, which states `HoloRecord.allWithin Name ∧ HoloRecord.aligned Name` as a theorem and proves it by `decide`.
+- `wa_holo! Thm ("holo.layouts") => Name`, the standard ABI witness, which states `HoloRecord.allWithin Name ∧ HoloRecord.aligned Name ∧ HoloRecord.nonOverlapping Name` as a theorem and proves it by `decide`;
+- `wa_holo! packed Thm ("holo.layouts") => Name`, the zero-padding witness, which also requires `HoloRecord.contiguous Name`.
 
-The file ends with the starter records (`c_AccountRecord`, `c_parts`, `cobol_ACCOUNT_RECORD`, `sqlite_account_record`, `sqlite_transactions`) and their theorems. The `HoloReversed` library target builds a `holo-reverse --lean-import HoloDSL.HoloDSL_checked` output saved as `lean/HoloReversed.lean`:
+The file ends with the starter records (`c_AccountRecord`, `c_parts`, `cobol_ACCOUNT_RECORD`, `sqlite_account_record`, `sqlite_transactions`) and their theorems, plus `uor_WireHeader`, a 16-byte tightly packed wire/Wasm header proved with `wa_holo! packed uor_WireHeader_packed`. `c_AccountRecord` is a padded C/Rust ABI layout (a 3-byte pad after `status`, and trailing padding to size 24): `wa_holo! c_AccountRecord_sound` holds, and `¬ c_AccountRecord.contiguous` is proved by `decide`.
+
+The `HoloReversed` library target builds a `holo-reverse --lean-import HoloDSL.HoloDSL_checked` output saved as `lean/HoloReversed.lean`:
 
 ```sh
 holo-reverse ledger.holo.wasm --out-dir out --lean-import HoloDSL.HoloDSL_checked
@@ -495,7 +499,7 @@ cp out/HoloDSL.lean lean/HoloReversed.lean
 cd lean && lake build HoloReversed
 ```
 
-The original DSL starter is [`docs/source/holo_dsl_starter.txt`](docs/source/holo_dsl_starter.txt). It is split into [`lean/HoloDSL/HoloDSL.lean`](lean/HoloDSL/HoloDSL.lean) and [`coq/HoloLayout.v`](coq/HoloLayout.v).
+The original DSL starter is [`docs/source/holo_dsl_starter.txt`](docs/source/holo_dsl_starter.txt). The disjoint and packed extensions are [`docs/source/holo_dsl_disjoint_packed.txt`](docs/source/holo_dsl_disjoint_packed.txt). They are in [`lean/HoloDSL/HoloDSL.lean`](lean/HoloDSL/HoloDSL.lean), and the starter is also split into [`coq/HoloLayout.v`](coq/HoloLayout.v).
 
 ### Tests
 
