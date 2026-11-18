@@ -95,16 +95,29 @@ jobs:
         cc: [gcc, clang]
     steps:
       - uses: actions/checkout@v4
+      - name: Install sqlite3 CLI and wabt (wasm-validate)
+        run: sudo apt-get update -q && sudo apt-get install -y -q sqlite3 wabt
       - name: Toolchain versions
-        run: ${{ matrix.cc }} --version && cmake --version
+        run: ${{ matrix.cc }} --version && cmake --version && sqlite3 --version && wasm-validate --version
       - name: Configure (C23, -Wall -Wextra -Wpedantic -Werror)
         run: cmake -S . -B build -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_BUILD_TYPE=RelWithDebInfo -DPW_XASM=OFF
       - name: Build
         run: cmake --build build -j1
       - name: Require the holo targets
-        run: test -x build/rblob
+        run: test -x build/rblob && test -x build/bsm
       - name: ctest (holo)
-        run: ctest --test-dir build --output-on-failure -V -R 'rblob'
+        run: ctest --test-dir build --output-on-failure -V -R 'rblob|bsm'
+      - name: bsm pack every fixture kind, inspect, wasm-validate
+        run: |
+          mkdir -p out
+          sqlite3 out/ledger.db < tests/fixtures/bsm/ledger.sql
+          ${{ matrix.cc }} -nostdlib -static -no-pie -o out/ledger.elf tests/fixtures/bsm/ledger_elf.S
+          ./build/bsm pack tests/fixtures/bsm/account.h tests/fixtures/bsm/account.cpy \
+            tests/fixtures/bsm/ledger.sql out/ledger.db tests/fixtures/bsm/ledger.s \
+            out/ledger.elf tests/fixtures/rust_ledger -o out/ledger.holo.wasm
+          ./build/bsm inspect out/ledger.holo.wasm
+          ./build/bsm pack tests/fixtures/bsm/account.h --abi wasm32 -o out/account32.holo.wasm
+          for w in out/*.holo.wasm build/bsm-cli/*.holo.wasm; do wasm-validate "$w" && echo "valid: $w"; done
       - name: rblob CLI on the rust_ledger fixture
         run: |
           ./build/rblob ingest tests/fixtures/rust_ledger -o out/rust_ledger.rblob
