@@ -150,7 +150,7 @@ endif()
 # Holo tools (C23): rblob (Rust crate -> .rblob -> functors). Shared code:
 # Python-re-compatible regex subset, json.dumps-compatible JSON, text/path
 # helpers. libc + POSIX only.
-option(PW_HOLO "Build the C23 holo tools (rblob, bsm)" ON)
+option(PW_HOLO "Build the C23 holo tools (rblob, bsm, holo-reverse)" ON)
 if(PW_HOLO AND CMAKE_VERSION VERSION_LESS 3.21)
   message(STATUS "holo tools: need CMake >= 3.21 for C23, not built")
 elseif(PW_HOLO)
@@ -183,7 +183,6 @@ elseif(PW_HOLO)
   # bsm: legacy inputs (C, COBOL, SQLite, assembly, ELF, Rust) -> .holo.wasm.
   # On x86-64 the ELF CFG comes from the asm decoder in asm/pw_x86_decode.S.
   set(PW_BSM_SOURCES
-    holo/bsm_main.c
     holo/pw_bsm.c
     holo/pw_bsm_elf.c
     holo/pw_bsm_wasm.c
@@ -194,15 +193,27 @@ elseif(PW_HOLO)
     set(PW_BSM_X86 ON)
     list(APPEND PW_BSM_SOURCES asm/pw_x86_decode.S xasm/pw_x86_text.c)
   endif()
-  add_executable(bsm ${PW_BSM_SOURCES})
-  set_target_properties(bsm PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
-  target_compile_options(bsm PRIVATE $<$<COMPILE_LANGUAGE:C>:${PW_WARN}>)
-  target_include_directories(bsm PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/xasm)
+  add_library(pw_bsm_core STATIC ${PW_BSM_SOURCES})
+  set_target_properties(pw_bsm_core PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(pw_bsm_core PRIVATE $<$<COMPILE_LANGUAGE:C>:${PW_WARN}>)
+  target_include_directories(pw_bsm_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/xasm)
   if(PW_BSM_X86)
-    target_compile_definitions(bsm PRIVATE PW_BSM_X86)
+    target_compile_definitions(pw_bsm_core PRIVATE PW_BSM_X86)
   endif()
-  target_link_libraries(bsm PRIVATE pw_holo_core)
+  target_link_libraries(pw_bsm_core PUBLIC pw_holo_core)
+
+  add_executable(bsm holo/bsm_main.c)
+  set_target_properties(bsm PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(bsm PRIVATE ${PW_WARN})
+  target_link_libraries(bsm PRIVATE pw_bsm_core)
   install(TARGETS bsm RUNTIME DESTINATION bin)
+
+  # holo-reverse: .holo.wasm -> C23 header, CompCert .v, Lean 4 HoloDSL.
+  add_executable(holo-reverse holo/holo_reverse_main.c)
+  set_target_properties(holo-reverse PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+  target_compile_options(holo-reverse PRIVATE ${PW_WARN})
+  target_link_libraries(holo-reverse PRIVATE pw_bsm_core)
+  install(TARGETS holo-reverse RUNTIME DESTINATION bin)
 
   if(BUILD_TESTING)
     # Digests of the reference packer's modules for account.h, account.cpy,
@@ -225,5 +236,14 @@ elseif(PW_HOLO)
               ${CMAKE_CURRENT_BINARY_DIR}/bsm-cli
               ${PW_BSM_SHA256_LP64} ${PW_BSM_SHA256_WASM32}
               ${PW_BSM_ELF_CC} ${PW_BSM_SQLITE})
+    # Digests of the reference reverse-compiler's outputs for that module.
+    add_test(NAME holo_reverse_c23_compcert_lean
+      COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/holo/holo_reverse_cli.sh
+              $<TARGET_FILE:holo-reverse> $<TARGET_FILE:bsm>
+              ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/bsm
+              ${CMAKE_CURRENT_BINARY_DIR}/holo-reverse-cli ${CMAKE_C_COMPILER}
+              410ee2877883d2aea10f35ce4be3e636df06ad62fd10c20656af86f347dd7961
+              556cbd742c6c69aeef745116d74270900ac256b6be30002fcddaf682e1c36a53
+              6d1991273afdc1a2e3c3ddfd8160efdf239db0e0d0bb17095e6adf5e7cc0cee3)
   endif()
 endif()

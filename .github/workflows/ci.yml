@@ -104,9 +104,9 @@ jobs:
       - name: Build
         run: cmake --build build -j1
       - name: Require the holo targets
-        run: test -x build/rblob && test -x build/bsm
+        run: test -x build/rblob && test -x build/bsm && test -x build/holo-reverse
       - name: ctest (holo)
-        run: ctest --test-dir build --output-on-failure -V -R 'rblob|bsm'
+        run: ctest --test-dir build --output-on-failure -V -R 'rblob|bsm|holo_reverse'
       - name: bsm pack every fixture kind, inspect, wasm-validate
         run: |
           mkdir -p out
@@ -117,12 +117,91 @@ jobs:
             out/ledger.elf tests/fixtures/rust_ledger -o out/ledger.holo.wasm
           ./build/bsm inspect out/ledger.holo.wasm
           ./build/bsm pack tests/fixtures/bsm/account.h --abi wasm32 -o out/account32.holo.wasm
-          for w in out/*.holo.wasm build/bsm-cli/*.holo.wasm; do wasm-validate "$w" && echo "valid: $w"; done
+          for w in out/*.holo.wasm build/bsm-cli/*.holo.wasm; do wasm-validate "$w"; echo "valid: $w"; done
+      - name: holo-reverse (C23 header, CompCert .v, Lean HoloDSL)
+        run: |
+          ./build/bsm pack tests/fixtures/bsm/account.h tests/fixtures/bsm/account.cpy \
+            tests/fixtures/bsm/ledger.sql tests/fixtures/bsm/ledger.s tests/fixtures/rust_ledger \
+            -o out/reverse.holo.wasm
+          ./build/holo-reverse out/reverse.holo.wasm --out-dir out/reversed
+          ./build/holo-reverse out/reverse.holo.wasm --out-dir out/reversed/lean --lean-import HoloDSL.HoloDSL_checked
+      - name: C23 / C11 compile of holo_reversed_c23.h (committed, checked copy, generated)
+        run: |
+          for std in c23 c11; do
+            for h in include/pandawatch/holo_reversed_c23.h out/reversed/holo_reversed_c23.h; do
+              ${{ matrix.cc }} -std=$std -Wall -Wextra -Werror -fsyntax-only -include "$h" -x c /dev/null
+              echo "$std ok: $h"
+            done
+            ${{ matrix.cc }} -std=$std -Wall -Wextra -Wpedantic -Werror -fsyntax-only \
+              -include include/pandawatch/holo_reversed_c23_checked.h -x c /dev/null
+            echo "$std -Wpedantic ok: include/pandawatch/holo_reversed_c23_checked.h"
+          done
+      - name: Upload holo-reverse output
+        if: matrix.cc == 'gcc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: holo-reversed
+          path: out/reversed
       - name: rblob CLI on the rust_ledger fixture
         run: |
           ./build/rblob ingest tests/fixtures/rust_ledger -o out/rust_ledger.rblob
           ./build/rblob verify out/rust_ledger.rblob
           ./build/rblob disassemble out/rust_ledger.rblob
+
+  lean:
+    name: Lean 4 HoloDSL (lake build)
+    needs: holo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: holo-reversed
+          path: out/reversed
+      - name: Install elan (toolchain from lean/lean-toolchain)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o "$RUNNER_TEMP/elan-init.sh"
+          sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: lake build (HoloDSL_checked, wa_holo! theorems on the starter records)
+        working-directory: lean
+        run: lake build
+      - name: lake build HoloReversed (holo-reverse --lean-import output)
+        run: |
+          cp out/reversed/lean/HoloDSL.lean lean/HoloReversed.lean
+          cd lean && lake build HoloReversed
+
+  coq-compcert:
+    name: Coq + CompCert (coqc)
+    needs: holo
+    runs-on: ubuntu-latest
+    container:
+      image: coqorg/coq:8.20
+      options: --user root
+    env:
+      OPAMROOT: /home/coq/.opam
+      OPAMROOTISOK: "1"
+      OPAMYES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: holo-reversed
+          path: out/reversed
+      - name: opam install coq-compcert
+        run: |
+          eval $(opam env)
+          opam update
+          opam install coq-compcert
+          coqc --version
+      - name: coqc coq/HoloLayout.v
+        run: |
+          eval $(opam env)
+          coqc coq/HoloLayout.v
+      - name: coqc holo-reverse holo_compcert.v
+        run: |
+          eval $(opam env)
+          coqc out/reversed/holo_compcert.v
 
   awk-oracle:
     runs-on: ubuntu-latest
