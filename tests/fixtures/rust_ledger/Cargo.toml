@@ -1,7 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-SnapKitty-Opaque-1.0
-# Copyright (C) 2026 Ahmad Ali Parr / SnapKitty Research Lab
-# Minimal manifest for the rust_ledger fixture (lib.rs is the user's file).
 [package]
 name = "rust_ledger"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"

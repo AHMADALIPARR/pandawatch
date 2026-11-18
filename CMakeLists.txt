@@ -173,7 +173,7 @@ elseif(PW_HOLO)
   if(BUILD_TESTING)
     # Expected digest of the rust_ledger blob (same bytes as the reference
     # rust_ingestor run on this fixture).
-    set(PW_RUST_LEDGER_SHA256 64223e263fc87a910d37954fc048e45766ba9d02dc159b9a3543d141f57ec76a)
+    set(PW_RUST_LEDGER_SHA256 5f9c0bfe831dc8d4a0aae229941646f46925fa58e4dddd7b8d6a3c19fc89d506)
     add_test(NAME rblob_rust_ledger_ingest_verify_disassemble
       COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/holo/rblob_cli.sh
               $<TARGET_FILE:rblob> ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/rust_ledger
